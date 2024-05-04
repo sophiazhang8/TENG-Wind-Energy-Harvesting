@@ -1,0 +1,171 @@
+!pip install deap
+import random
+import numpy as np
+import tensorflow.compat.v1 as tf
+from deap import base, creator, tools, algorithms
+tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
+import pandas as pd
+import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split
+from tensorflow.keras.layers import Dropout
+from tensorflow.keras.callbacks import EarlyStopping
+from tensorflow.keras.regularizers import l2
+
+# Load dataset
+dataset_FEM = pd.read_csv('preciseMLdata2.csv')
+
+if __name__ == "__main__":
+    print(dataset_FEM.columns)
+    print(dataset_FEM.columns)
+    print(dataset_FEM.iloc[:, -1:].head())
+
+
+# Separate feature labels, inputs, and output
+input_dataset_FEM = dataset_FEM.iloc[:, :3].values
+
+out_features_dataset_FEM = dataset_FEM.iloc[:, -1:].values
+minVal = min(out_features_dataset_FEM)
+maxVal = max(out_features_dataset_FEM)
+out_features_dataset_FEM = (out_features_dataset_FEM - minVal) / (maxVal - minVal)
+
+X_train_FEM, X_test_FEM, y_train_FEM, y_test_FEM = train_test_split(
+    input_dataset_FEM, out_features_dataset_FEM, test_size=0.3, random_state=42)
+
+
+# Define the DNN architecture
+dnn_model = tf.keras.Sequential([
+    tf.keras.layers.Dense(100, activation='ReLU', input_shape=(
+        3,), kernel_regularizer=l2(0.01)),
+    Dropout(0.2),
+    tf.keras.layers.Dense(50, activation='ReLU', kernel_regularizer=l2(0.01)),
+    Dropout(0.2),
+    tf.keras.layers.Dense(1)  
+])
+
+# Compile the DNN model
+dnn_model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
+                      loss='mean_squared_logarithmic_error')
+early_stopping = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
+
+for i in range (1):
+	history_dataset_FEM = dnn_model.fit(
+		X_train_FEM, y_train_FEM, epochs=100, batch_size=64,
+		validation_data=(X_test_FEM, y_test_FEM), 
+		callbacks=[early_stopping], verbose=0)
+
+# Save the trained model in the .keras format
+dnn_model.save('dnnModel.keras')
+
+def model_predict(input_data):
+    global loaded_model
+    if 'loaded_model' not in globals():
+        loaded_model = tf.keras.models.load_model('dnnModel.keras')
+    prediction = loaded_model.predict(input_data)
+    prediction = prediction * (maxVal - minVal) + minVal
+    return prediction
+
+
+
+
+# Leave room for future multi-objective optimization
+if not hasattr(creator, "FitnessMulti"):
+    # solely maximizatin problem for now
+    creator.create("FitnessMulti", base.Fitness, weights=(1.0, 1.0))
+    creator.create("Individual", list, fitness=creator.FitnessMulti)
+
+# Surpress any infeasible inputs
+def feasible(individual):
+    # Feasibility function for the individual. Returns True if feasible, False otherwise.
+    if 2.5 <= individual[0] <= 18.5 and 5 <= individual[1] <= 17 and 5 <= individual[2] <= 17:
+				return True
+    return False
+	
+def evaluate(individual):
+    input_data = np.array(individual).reshape(1, -1)
+    prediction = model_predict(input_data)
+    print("Prediction for individual:", prediction)  # for verification only
+    # Get fitness from the predicted result
+    comp1 = prediction[0, :1]
+    comp2 = prediction[0, :1]
+    fit1 = np.max(comp1)
+    fit2 = np.max(comp2) 
+    return (fit1, fit2)
+
+toolbox = base.Toolbox()
+
+# Generate the initial individual's attributes
+toolbox.register("attr_hgt", random.uniform, 2.5, 18.5)
+toolbox.register("attr_len", random.uniform, 5, 17)
+toolbox.register("attr_lenFm", random.uniform, 5, 17)
+
+def create_individual():
+    return [toolbox.attr_hgt(), toolbox.attr_len(),
+            toolbox.attr_lenFm()]
+
+toolbox.register("individual", tools.initIterate,
+                 creator.Individual, create_individual)
+toolbox.register("population", tools.initRepeat, list, toolbox.individual)
+toolbox.register("evaluate", evaluate)
+toolbox.decorate("evaluate", tools.DeltaPenalty(feasible, -10000))
+toolbox.register("mate", tools.cxTwoPoint)
+toolbox.register("mutate", tools.mutGaussian, mu=0, sigma=1, indpb=0.2)
+# NSGA-II for multi-objective selection
+toolbox.register("select", tools.selNSGA2)
+
+def main():
+    random.seed(64)
+    population = toolbox.population(n=50)
+    ngen = 60  # Number of generations
+    stats = tools.Statistics(lambda ind: ind.fitness.values)
+
+    result, log = algorithms.eaSimple(population, toolbox, cxpb=0.5, mutpb=0.2, ngen=ngen, stats=stats, verbose=True)
+    best_inds = tools.selBest(population, 1)
+    for bi in best_inds:
+        print("The best setting for input:", bi)
+        print("Optimized fitness:", bi.fitness.values)
+    return population, log
+
+final_pop, logbook = main()
+
+
+# Initial model metrics
+loss = history_dataset_FEM.history['loss']
+val_loss = history_dataset_FEM.history['val_loss']
+
+epochs = list(range(len(history_dataset_FEM.history['loss'])))
+
+# Finding max values for scaling purpose
+max_loss = max(max(history_dataset_FEM.history['loss']), max(history_dataset_FEM.history['val_loss']))
+
+# Scaling losses
+scaled_loss = [x / max(history_dataset_FEM.history['loss']) for x in history_dataset_FEM.history['loss']]
+scaled_val_loss = [x / max(history_dataset_FEM.history['val_loss']) for x in history_dataset_FEM.history['val_loss']]
+
+# Derived accuracies ensuring loss is between 0 and 1
+accuracy = [1 - x for x in scaled_loss]
+val_accuracy = [1 - x for x in scaled_val_loss]
+
+
+# Plotting
+plt.figure(figsize=(12, 10))
+
+# Now plot the scaled data
+plt.subplot(2,2,1)
+plt.plot(loss, label='Training Loss')
+plt.plot(val_loss, label='Validation Loss')
+plt.title('DNN Model Loss')
+plt.xlabel('Epoch')
+plt.ylabel('Loss')
+plt.legend()
+
+# "Accuracy" Plot for the DNN model
+plt.subplot(2, 2, 2)
+plt.plot(epochs, accuracy, label='Training "Accuracy"')
+plt.plot(epochs, val_accuracy, label='Validation "Accuracy"')
+plt.title('DNN Model "Accuracy"')
+plt.xlabel('Epoch')
+plt.ylabel('"Accuracy"')
+plt.legend()
+
+plt.tight_layout()
+plt.show()
