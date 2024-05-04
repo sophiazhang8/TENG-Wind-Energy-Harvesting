@@ -1,0 +1,47 @@
+#include <AccelStepper.h>
+// Define the stepper motor connections and steps per revolution
+#define DIR_PIN 2
+#define STEP_PIN 3
+#define STEPS_PER_REVOLUTION 200
+// Create a new stepper motor object
+AccelStepper stepper(AccelStepper::DRIVER, STEP_PIN, DIR_PIN);
+
+#define sensor A0 // Sharp IR GP2Y0A41SK0F (4-30cm, analog)
+
+void setup() {
+ // Set the maximum speed and acceleration of the stepper motor
+  stepper.setMaxSpeed(200);
+  stepper.setAcceleration(200);
+ //setMaxSpeed and setAcceleration should be the same speed in order for the spin motion of the stepper motor to be constant. Slow:500, Medium:2000, Fast:4000
+
+  Serial.begin(9600); // start the serial port
+
+}
+
+void action() {
+    reading();
+    stepper.move(-STEPS_PER_REVOLUTION/5);
+    stepper.runToPosition();
+    reading();
+    delay(1);
+    stepper.move(STEPS_PER_REVOLUTION/5);
+    stepper.runToPosition();
+  }
+
+void reading () {
+  float volts = analogRead(sensor)*0.0048828125; // value from sensor * (5/1024)
+ int distance = 13*pow(volts, -1); // worked out from datasheet graph
+ //delay(25); // slow down serial port
+ if (distance <= 30){
+  Serial.println(distance); // print the distance
+ }
+}
+
+void loop () {
+  action ();
+  //while ((STEPS_PER_REVOLUTION == 200)) {
+  //reading ();
+ // }
+    
+}
+
