@@ -12,7 +12,7 @@ from tensorflow.keras.callbacks import EarlyStopping
 from tensorflow.keras.regularizers import l2
 
 # Load dataset
-dataset_FEM = pd.read_csv('preciseMLdata2.csv')
+dataset_FEM = pd.read_csv('preciseMLdata3.csv')
 
 if __name__ == "__main__":
     print(dataset_FEM.columns)
